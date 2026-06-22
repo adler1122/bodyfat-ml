@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Body Fat Predictor</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    max-width: 480px;
+    margin: 40px auto;
+    padding: 0 16px;
+    color: #1a1a1a;
+    background: #fafafa;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.sub { color: #666; font-size: 14px; margin-top: 0; }
+  .sex-toggle { display: flex; gap: 8px; margin: 16px 0; }
+  .sex-toggle button {
+    flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px;
+    background: white; cursor: pointer; font-size: 14px;
+  }
+  .sex-toggle button.active { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+  label { display: block; font-size: 13px; margin-top: 14px; margin-bottom: 4px; color: #333; }
+  input[type=number] {
+    width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px;
+    font-size: 14px; box-sizing: border-box;
+  }
+  button.predict {
+    margin-top: 24px; width: 100%; padding: 12px; background: #2563eb; color: white;
+    border: none; border-radius: 6px; font-size: 15px; cursor: pointer;
+  }
+  button.predict:hover { background: #1d4ed8; }
+  #result {
+    margin-top: 24px; padding: 16px; border-radius: 8px; background: white;
+    border: 1px solid #ddd; display: none;
+  }
+  #result .value { font-size: 32px; font-weight: 700; }
+  #result .category { color: #555; font-size: 14px; margin-top: 4px; }
+  .error { color: #c0392b; font-size: 13px; margin-top: 12px; }
+
+  #targets-panel {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    width: 230px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 13px;
+    display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  #targets-panel h3 { margin: 0 0 10px 0; font-size: 14px; }
+  #targets-panel .stat-row {
+    display: flex; justify-content: space-between;
+    padding: 4px 0; color: #555;
+  }
+  #targets-panel .stat-row span:last-child { font-weight: 600; color: #1a1a1a; }
+  #targets-panel hr { border: none; border-top: 1px solid #eee; margin: 10px 0; }
+  #targets-panel label { font-size: 12px; margin-top: 0; }
+  #targets-panel input[type=number] { font-size: 13px; padding: 6px; }
+  #targets-panel button.goal-btn {
+    margin-top: 10px; width: 100%; padding: 8px; background: #1a1a1a; color: white;
+    border: none; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  #targets-panel button.goal-btn:hover { background: #333; }
+  #goal-result { margin-top: 10px; font-size: 13px; }
+  #goal-result .amount { font-size: 18px; font-weight: 700; }
+  #goal-result .amount.lose { color: #c0392b; }
+  #goal-result .amount.gain { color: #2563eb; }
+  #goal-result .amount.maintain { color: #888; }
+
+  @media (max-width: 760px) {
+    #targets-panel { position: static; width: auto; margin-top: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Body Fat Percentage Predictor</h1>
+<p class="sub">Estimates body fat % from circumference measurements using a linear regression model trained separately for men and women.</p>
+
+<div class="sex-toggle">
+  <button id="btn-male" class="active" onclick="setSex('male')">Male</button>
+  <button id="btn-female" onclick="setSex('female')">Female</button>
+</div>
+
+<div id="form-fields"></div>
+
+<button class="predict" onclick="predict()">Predict body fat %</button>
+
+<div id="result">
+  <div class="value" id="result-value"></div>
+  <div class="category" id="result-category"></div>
+</div>
+
+<div class="error" id="error"></div>
+
+<div id="targets-panel">
+  <h3>Lean mass & fat goal</h3>
+  <div class="stat-row"><span>Current weight</span><span id="stat-weight">-</span></div>
+  <div class="stat-row"><span>Body fat</span><span id="stat-bf">-</span></div>
+  <div class="stat-row"><span>Fat mass</span><span id="stat-fatmass">-</span></div>
+  <div class="stat-row"><span>Lean mass</span><span id="stat-leanmass">-</span></div>
+  <hr>
+  <label for="goal-input">Target body fat %</label>
+  <input type="number" id="goal-input" step="0.5" value="15">
+  <button class="goal-btn" onclick="calcGoal()">Calculate</button>
+  <div id="goal-result"></div>
+</div>
+
+<script type="application/json" id="features-data">{{ {"male": male_features, "female": female_features} | tojson }}</script>
+
+<script>
+  const FEATURES = JSON.parse(document.getElementById("features-data").textContent);
+
+  const UNITS = {
+    Age: "years", Weight: "kg", Height: "cm", Neck: "cm", Chest: "cm",
+    Abdomen: "cm", Hip: "cm", Thigh: "cm", Knee: "cm", Ankle: "cm",
+    Biceps: "cm", Forearm: "cm", Wrist: "cm"
+  };
+
+  const DEFAULTS = {
+    Age: 30, Weight: 75, Height: 175, Neck: 38, Chest: 100,
+    Abdomen: 90, Hip: 100, Thigh: 58, Knee: 38, Ankle: 22.5,
+    Biceps: 32, Forearm: 28, Wrist: 18
+  };
+
+  let currentSex = "male";
+  let currentWeight = null;
+  let currentBF = null;
+
+  function renderFields() {
+    const container = document.getElementById("form-fields");
+    container.innerHTML = "";
+    FEATURES[currentSex].forEach(feat => {
+      const label = document.createElement("label");
+      label.textContent = `${feat} (${UNITS[feat] || ""})`;
+      label.setAttribute("for", "field-" + feat);
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.id = "field-" + feat;
+      input.step = "0.5";
+      input.value = DEFAULTS[feat] ?? 0;
+
+      container.appendChild(label);
+      container.appendChild(input);
+    });
+  }
+
+  function setSex(sex) {
+    currentSex = sex;
+    document.getElementById("btn-male").classList.toggle("active", sex === "male");
+    document.getElementById("btn-female").classList.toggle("active", sex === "female");
+    document.getElementById("result").style.display = "none";
+    document.getElementById("targets-panel").style.display = "none";
+    document.getElementById("error").textContent = "";
+    renderFields();
+  }
+
+  async function predict() {
+    const measurements = {};
+    FEATURES[currentSex].forEach(feat => {
+      measurements[feat] = document.getElementById("field-" + feat).value;
+    });
+
+    document.getElementById("error").textContent = "";
+
+    try {
+      const res = await fetch("/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sex: currentSex, measurements })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        document.getElementById("error").textContent = data.error || "Something went wrong.";
+        document.getElementById("result").style.display = "none";
+        return;
+      }
+
+      document.getElementById("result-value").textContent = data.prediction + "%";
+      document.getElementById("result-category").textContent = "Reference category: " + data.category;
+      document.getElementById("result").style.display = "block";
+
+      // Weight comes straight from the form (it's always one of the
+      // measurement inputs), body fat % comes from the prediction.
+      currentWeight = parseFloat(document.getElementById("field-Weight").value);
+      currentBF = data.prediction;
+
+      showLeanMassPanel();
+    } catch (err) {
+      document.getElementById("error").textContent = "Could not reach the server: " + err.message;
+    }
+  }
+
+  // Lean (fat-free) mass is assumed constant when gaining/losing fat -
+  // a simplification (muscle does change too in reality), but it's the
+  // standard way to estimate "how much pure fat" to gain/lose:
+  //   fat_mass  = weight * (bf% / 100)
+  //   lean_mass = weight - fat_mass
+  //   at the goal: goal_weight = lean_mass / (1 - goal_bf% / 100)
+  //   fat_change = goal_weight - weight
+  function showLeanMassPanel() {
+    const fatMass = currentWeight * (currentBF / 100);
+    const leanMass = currentWeight - fatMass;
+
+    document.getElementById("stat-weight").textContent = currentWeight.toFixed(1) + " kg";
+    document.getElementById("stat-bf").textContent = currentBF.toFixed(1) + "%";
+    document.getElementById("stat-fatmass").textContent = fatMass.toFixed(1) + " kg";
+    document.getElementById("stat-leanmass").textContent = leanMass.toFixed(1) + " kg";
+
+    document.getElementById("targets-panel").style.display = "block";
+    document.getElementById("goal-result").innerHTML = "";
+  }
+
+  function calcGoal() {
+    if (currentWeight === null || currentBF === null) return;
+
+    const goalBF = parseFloat(document.getElementById("goal-input").value);
+    const resultDiv = document.getElementById("goal-result");
+
+    if (isNaN(goalBF) || goalBF <= 0 || goalBF >= 100) {
+      resultDiv.innerHTML = `<span style="color:#c0392b;">Enter a valid target % (0-100)</span>`;
+      return;
+    }
+
+    const fatMass = currentWeight * (currentBF / 100);
+    const leanMass = currentWeight - fatMass;
+
+    // Lean mass held constant; solve for the weight at which goalBF% applies
+    const goalWeight = leanMass / (1 - goalBF / 100);
+    const fatChange = goalWeight - currentWeight;
+
+    let direction, label;
+    if (Math.abs(fatChange) < 0.05) {
+      direction = "maintain";
+      label = "Already at target";
+    } else if (fatChange < 0) {
+      direction = "lose";
+      label = `Lose ${Math.abs(fatChange).toFixed(1)} kg of fat`;
+    } else {
+      direction = "gain";
+      label = `Gain ${fatChange.toFixed(1)} kg of fat`;
+    }
+
+    resultDiv.innerHTML = `
+      <div class="amount ${direction}">${label}</div>
+      <div style="color:#888; font-size:12px; margin-top:2px;">
+        New weight at goal: ${goalWeight.toFixed(1)} kg (lean mass assumed unchanged)
+      </div>
+    `;
+  }
+
+  renderFields();
+</script>
+
+</body>
+</html>
