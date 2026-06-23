@@ -77,12 +77,6 @@ Reducing from 13 to 6 features cost less than 0.002 R² — effectively zero acc
 
 ### Model Selection
 
-10 model families were compared using 10-fold cross-validation (in `preprocessing.ipynb`). Results:
-
-- Linear models (LinearRegression, Ridge, Lasso, ElasticNet) consistently outperformed all nonlinear models on both sexes
-- Tree-based models (RandomForest, GradientBoosting, ExtraTrees) and distance/kernel models (KNN, SVR) underperformed — dataset is too small (~250/180 rows per sex) for them to learn nonlinear patterns over noise
-- Regularization (Ridge/Lasso/ElasticNet) offered <0.02 R² improvement over plain LinearRegression — not worth the added complexity
-
 **→ Plain LinearRegression chosen for both models.**
 
 **Final performance (10-fold CV):**
@@ -148,15 +142,6 @@ flask
 matplotlib
 kagglehub
 ```
-
----
-
-## Future Work
-
-- CNN model for body fat estimation from images (dataset sourcing in progress)
-- Flutter mobile app — Android + iOS, fully offline, model coefficients hardcoded as a formula
-
----
 
 ## Disclaimer
 
